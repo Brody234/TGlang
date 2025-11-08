@@ -6,19 +6,15 @@ T_FLOAT32 = 'float32'
 T_FLOAT64 = 'float64'
 
 class RegAlloc:
-    """
-    Manage separate pools:
-      - GPR x0..x28 for ints (we derive wN/xN from the same index)
-      - FP  d0..d31 (alias with sN) for floats
-    """
+    
     def __init__(self):
         self.int_used = set()
         self.fp_used  = set()
-        self.var_reg  = {}   # name -> (type (x, d, s), reg_index)
-        self.var_type = {}   # name -> type
+        self.var_reg  = {} 
+        self.var_type = {}
 
     def alloc_int(self, name: str, ty: str) -> int:
-        for i in range(29):  # x0..x28
+        for i in range(29):
             if i not in self.int_used:
                 self.int_used.add(i)
                 self.var_reg[name]  = (ty, i)
@@ -68,7 +64,11 @@ class RegAlloc:
         self.ensure_declared(name)
         return self.var_type[name]
 
-def make_asm(ast, allocator):
+class State:
+    def __init__(self):
+        self.dest_var
+
+def make_asm(ast, allocator, state):
     if(ast[0] == 'decl'):
         allocator.declare(ast[2][1], ast[1])
         return "", []
@@ -83,27 +83,32 @@ def make_asm(ast, allocator):
     
     elif(ast[0] == 'num'):
         return str(ast[1])
+    
     elif(ast[0] == 'add'):
-        reg, lines = make_asm(ast, alloc)
+        make_asm(ast, allocator)
+
     elif(ast[0] == 'mul'):
         x=1
     elif(ast[0] == 'initpd'):
         source = alloc.reg_name(ast[1][1])
-        reg, lines = make_asm(ast[2], alloc)
+        state.var_name = source
+        reg, lines = make_asm(ast[2], alloc, state)
         return "", [f"str {source}, {reg}"]
     
 if __name__ == "__main__":
-
     alloc = RegAlloc()
+    state = State()
+
     tree1 = parser.parse("int32 y")
     ast1 = AST().transform(tree1)
-    make_asm(ast1, alloc)
+    make_asm(ast1, alloc, state)
 
     tree1 = parser.parse("int32 x")
     ast1 = AST().transform(tree1)
-    make_asm(ast1, alloc)
+    make_asm(ast1, alloc, state)
 
     tree = parser.parse("y = x + 3")
     ast = AST().transform(tree)
+
     print(ast)
-    print(make_asm(ast, alloc)[1])
+    print(make_asm(ast, alloc, state)[1])

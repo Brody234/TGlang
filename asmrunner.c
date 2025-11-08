@@ -1,8 +1,8 @@
 #include <stdio.h>
 
-int add(int a, int b);
+int func(int a, int b);
 
 int main() {
-    printf("%d\n", add(1, 2));
+    printf("%d\n", func(1, 2));
     return 0;
 }

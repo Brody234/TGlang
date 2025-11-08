@@ -86,7 +86,7 @@ class AST(Transformer):
         return ("initpd", items[0], items[1]) 
 
     def start(self, items):
-            return items   
+            return items
     
     def decl(self, items):
         if(items[1][0] != 'var'):

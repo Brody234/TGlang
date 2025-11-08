@@ -1,5 +1,6 @@
-.global _add
+.global _func
 
-_add:
+_func:
+
     add     x0, x0, x1
     ret
