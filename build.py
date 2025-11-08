@@ -285,6 +285,15 @@ class Compiler:
         self.out.emit("str  x8, [x9]")
 
     # ---- builtin calls: print ----
+    def _prep_varargs(self, mirror_reg=None):
+    # For printf with only integer args, no FP/SIMD regs are used.
+    # ABI wants x8 = number of FP/SIMD args in registers (0 here).
+        if mirror_reg:
+            self.out.emit(f"mov  x8, {mirror_reg}")
+        else:
+            self.out.emit("mov  x8, #0")
+        self.out.emit("mov  x9, sp")
+        self.out.emit("str  x8, [x9]")
     def compile_print_string(self, line, ln):
         m = STR_CALL_RE.fullmatch(line)
         if not m: return False
@@ -304,8 +313,8 @@ class Compiler:
             fmt = self.fmt_i32
             self.out.emit(f"adrp x0, {fmt}@PAGE")
             self.out.emit(f"add  x0, x0, {fmt}@PAGEOFF")
-            self._emit_mov_imm("x1", 64, int(tok))   # immediate -> x1
-            self._prep_varargs()                       # x8 = 0
+            self._emit_mov_imm("x1", 64, int(tok))
+            self._prep_varargs("x1")            # mirror into x8, but printf still uses x1
             self.out.emit("bl _printf")
             return True
 
@@ -317,9 +326,9 @@ class Compiler:
                 fmt = self.fmt_i32
                 self.out.emit(f"adrp x0, {fmt}@PAGE")
                 self.out.emit(f"add  x0, x0, {fmt}@PAGEOFF")
-                r = self.regs.reg(tok)           # e.g. wN
-                self.out.emit(f"sxtw x1, {r}")   # sign-extend into x1 for %d
-                self._prep_varargs()
+                r = self.regs.reg(tok)          # wN
+                self.out.emit(f"sxtw x1, {r}")  # sign-extend into x1 for %d
+                self._prep_varargs("x1")        # mirror value into x8 (optional)
                 self.out.emit("bl _printf")
                 return True
 
@@ -327,14 +336,13 @@ class Compiler:
                 fmt = self.fmt_i64
                 self.out.emit(f"adrp x0, {fmt}@PAGE")
                 self.out.emit(f"add  x0, x0, {fmt}@PAGEOFF")
-                r = self.regs.reg(tok)           # e.g. xN
+                r = self.regs.reg(tok)          # xN
                 self.out.emit(f"mov  x1, {r}")
-                self._prep_varargs()
+                self._prep_varargs("x1")        # mirror value into x8 (optional)
                 self.out.emit("bl _printf")
                 return True
 
-            raise RuntimeError(f"[line {ln}] print() currently supports int32/int64 and string literals")
-
+            raise RuntimeError(f"[line {ln}] print() supports int32/int64 and string literals")
         return False
 
     # ---- gemini("...") syscall wrapper ----
