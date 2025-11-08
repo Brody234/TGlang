@@ -71,11 +71,12 @@ class RegAlloc:
 def make_asm(ast, allocator):
     if(ast[0] == 'decl'):
         allocator.declare(ast[2][1], ast[1])
+        return "", []
     elif(ast[0]=='sub'):
         x=1
     
     elif(ast[0] == 'var'):
-        return alloc.reg_name(ast[1])
+        return alloc.reg_name(ast[1]), []
     
     elif(ast[0] == 'div'):
         x=1
@@ -83,15 +84,16 @@ def make_asm(ast, allocator):
     elif(ast[0] == 'num'):
         return str(ast[1])
     elif(ast[0] == 'add'):
-        x=1
+        reg, lines = make_asm(ast, alloc)
     elif(ast[0] == 'mul'):
         x=1
     elif(ast[0] == 'initpd'):
         source = alloc.reg_name(ast[1][1])
-        val = make_asm(ast[2], alloc)
-        return f"str {source}, {val}"
+        reg, lines = make_asm(ast[2], alloc)
+        return "", [f"str {source}, {reg}"]
     
 if __name__ == "__main__":
+
     alloc = RegAlloc()
     tree1 = parser.parse("int32 y")
     ast1 = AST().transform(tree1)
@@ -101,7 +103,7 @@ if __name__ == "__main__":
     ast1 = AST().transform(tree1)
     make_asm(ast1, alloc)
 
-    tree = parser.parse("y = x")
+    tree = parser.parse("y = x + 3")
     ast = AST().transform(tree)
     print(ast)
-    print(make_asm(ast, alloc))
+    print(make_asm(ast, alloc)[1])
