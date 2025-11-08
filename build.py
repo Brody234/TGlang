@@ -1,5 +1,13 @@
 import os, re, subprocess
 
+import warnings
+warnings.filterwarnings(
+    "ignore",
+    category=FutureWarning,
+    module="google\\.api_core\\._python_version_support"
+)
+
+
 FILE_NAME = "beta"
 
 # ---------- tokens & helpers ----------
@@ -20,11 +28,14 @@ def strip_comment(s: str) -> str:
     return COMMENT_RE.sub('', s).strip()
 
 def is_ident(s): return IDENT_RE.fullmatch(s) is not None
+
 def is_int(s):   return INT_RE.fullmatch(s) is not None
+
 def is_float_lit(s): return FLOAT_LIT.fullmatch(s) is not None
 
 # cond token helpers (identifier or integer literal)
 def is_cond_ident(tok): return is_ident(tok)
+
 def is_cond_int(tok):   return is_int(tok)
 
 # ---------- register allocator with block scoping ----------
@@ -45,11 +56,10 @@ class RegAlloc:
             if ty in (T_INT32, T_INT64): self.int_used.discard(idx)
             else: self.fp_used.discard(idx)
 
-    
     def declare(self, name, ty):
         if name in self.var_info: raise ValueError(f"Variable '{name}' already declared")
         if ty in (T_INT32, T_INT64):
-            for i in range(2, 29):   # reserve 0/1 for temps/ABI
+            for i in range(2, 29):   # keep x0/x1 for call ABI
                 if i not in self.int_used:
                     self.int_used.add(i)
                     self.var_info[name] = (ty, i)
@@ -66,7 +76,6 @@ class RegAlloc:
             raise RuntimeError("Out of FP registers")
         else:
             raise ValueError("unknown type")
-
 
     def ensure(self, name):
         if name not in self.var_info: raise ValueError(f"Use of undeclared variable '{name}'")
@@ -119,6 +128,8 @@ ELSE_AFTER_CLOSE_RE = re.compile(r'^\s*\}\s*else\s*\{\s*$')
 FOR_HEAD_RE = re.compile(
     rf'^\s*for\s*\(\s*(.*?)\s*;\s*{COND_TOKEN}\s*(==|!=|>=|>|<=|<)\s*{COND_TOKEN}\s*;\s*(.*?)\s*\)\s*\{{\s*$'
 )
+GEMINI_CALL_RE = re.compile(r'^\s*gemini\s*\(\s*"(.*)"\s*\)\s*;?\s*$')
+
 
 def parse_binop(rhs_raw):
     m = BINOP_RE.fullmatch(rhs_raw)
@@ -141,7 +152,6 @@ class Compiler:
         # builtin format strings for ints
         self.fmt_i32 = self.cstring("%d\n")
         self.fmt_i64 = self.cstring("%lld\n")
-
 
     def unique(self, base):
         self.uniq += 1
@@ -175,9 +185,12 @@ class Compiler:
             lines.append(f'  .asciz "{esc}"')
         return "\n".join(lines) + "\n"
 
+    # ---- shell-quoting helper for gemini() ----
+    def _shell_single_quote(self, s: str) -> str:
+        # Safely single-quote for POSIX shell: ' -> "'\"'\"'"
+        return s.replace("'", "'\"'\"'")
 
-
-    # ---- emit large immediates safely (ARM64) ----
+    # ---- movz/movk synth for 32/64-bit ----
     def _emit_mov_imm(self, reg: str, bits: int, value: int):
         mask = (1 << bits) - 1
         val = value & mask
@@ -197,7 +210,7 @@ class Compiler:
         if not wrote:
             self.out.emit(f"movz {reg}, #0")
 
-    # ---- helpers used by decl/assign ----
+    # ---- arithmetic helpers used by decl/assign ----
     def _emit_int_binop(self, dst, ty, name, ln, op, L, R):
         def reg_of_var(v):
             self.regs.ensure(v)
@@ -260,6 +273,17 @@ class Compiler:
         self._emit_mov_imm(tmp2, 32 if ty==T_INT32 else 64, int(b_tok))
         self.out.emit(f"cmp {tmp}, {tmp2}")
 
+    # ----- macOS AArch64 varargs prep for printf -----
+    def _prep_varargs(self, mirror_reg=None):
+        # ABI wants x8 = number of FP/SIMD args in registers (we pass 0).
+        # Some libcs also read a shadow slot on stack; we mirror x8 there.
+        if mirror_reg:
+            self.out.emit(f"mov  x8, {mirror_reg}")  # value doesn't matter; we just move something stable
+        else:
+            self.out.emit("mov  x8, #0")
+        self.out.emit("mov  x9, sp")
+        self.out.emit("str  x8, [x9]")
+
     # ---- builtin calls: print ----
     def compile_print_string(self, line, ln):
         m = STR_CALL_RE.fullmatch(line)
@@ -273,21 +297,19 @@ class Compiler:
 
     def compile_print_value(self, line, ln):
         m = PRINT_VAL_RE.fullmatch(line)
-        print(m)
         if not m: return False
         tok = m.group(1)
 
         if is_int(tok):
-            print(0)
             fmt = self.fmt_i32
             self.out.emit(f"adrp x0, {fmt}@PAGE")
             self.out.emit(f"add  x0, x0, {fmt}@PAGEOFF")
             self._emit_mov_imm("x1", 64, int(tok))   # immediate -> x1
+            self._prep_varargs()                       # x8 = 0
             self.out.emit("bl _printf")
             return True
 
         if is_ident(tok):
-            print(1)
             self.regs.ensure(tok)
             ty = self.regs.ty(tok)
 
@@ -295,26 +317,19 @@ class Compiler:
                 fmt = self.fmt_i32
                 self.out.emit(f"adrp x0, {fmt}@PAGE")
                 self.out.emit(f"add  x0, x0, {fmt}@PAGEOFF")
-                r = self.regs.reg(tok)           # e.g. w2
-                if r.startswith("w"):
-                    print(r)
-                    # zero-extend 32->64 into x1 (use sxtw if you want negatives preserved)
-                    self.out.emit(f"mov  w1, {r}") 
-                else:
-                    self.out.emit(f"mov x1, {r}")
+                r = self.regs.reg(tok)           # e.g. wN
+                self.out.emit(f"sxtw x1, {r}")   # sign-extend into x1 for %d
+                self._prep_varargs()
                 self.out.emit("bl _printf")
                 return True
 
             if ty == T_INT64:
-                print(2)
                 fmt = self.fmt_i64
                 self.out.emit(f"adrp x0, {fmt}@PAGE")
                 self.out.emit(f"add  x0, x0, {fmt}@PAGEOFF")
-                r = self.regs.reg(tok)           # e.g. x2
-                if r.startswith("w"):
-                    self.out.emit(f"uxtw x1, {r}")
-                else:
-                    self.out.emit(f"mov x1, {r}")
+                r = self.regs.reg(tok)           # e.g. xN
+                self.out.emit(f"mov  x1, {r}")
+                self._prep_varargs()
                 self.out.emit("bl _printf")
                 return True
 
@@ -322,7 +337,22 @@ class Compiler:
 
         return False
 
+    # ---- gemini("...") syscall wrapper ----
+    def compile_gemini_call(self, line, ln):
+        m = GEMINI_CALL_RE.fullmatch(line)
+        if not m:
+            return False
 
+        prompt = m.group(1)
+        safe = self._shell_single_quote(prompt)
+        cmd  = f"./gemini '{safe}'"
+
+        # Put command in a C string and call system(3)
+        lbl = self.cstring(cmd)
+        self.out.emit(f"adrp x0, {lbl}@PAGE")
+        self.out.emit(f"add  x0, x0, {lbl}@PAGEOFF")
+        self.out.emit("bl _system")
+        return True
 
     # ---- simple statements ----
     def compile_store_call(self, line, ln):
@@ -665,6 +695,8 @@ class Compiler:
     def compile_statement(self, raw, ln):
         line = strip_comment(raw)
         if not line: return
+        # Order matters: custom builtins first
+        if self.compile_gemini_call(line, ln): return
         if self.compile_print_string(line, ln): return
         if self.compile_print_value(line, ln): return
         if self.compile_label(line, ln): return
@@ -706,12 +738,12 @@ def compile_tg_to_asm(tg_path, asm_path):
     comp.out.emit("b L_exit")
     comp.out.extend(EPILOGUE)
 
-
     # stitch final assembly: cstrings then text
     asm_full = comp.emit_cstrings_section() + comp.out.text()
 
     with open(asm_path,"w") as f:
         f.write(asm_full)
+
 
 def main():
     tg, asm = "beta.tg", "beta.s"
