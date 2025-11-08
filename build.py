@@ -119,6 +119,8 @@ ELSE_AFTER_CLOSE_RE = re.compile(r'^\s*\}\s*else\s*\{\s*$')
 FOR_HEAD_RE = re.compile(
     rf'^\s*for\s*\(\s*(.*?)\s*;\s*{COND_TOKEN}\s*(==|!=|>=|>|<=|<)\s*{COND_TOKEN}\s*;\s*(.*?)\s*\)\s*\{{\s*$'
 )
+GEMINI_CALL_RE = re.compile(r'^\s*gemini\s*\(\s*"(.*)"\s*\)\s*;?\s*$')
+
 
 def parse_binop(rhs_raw):
     m = BINOP_RE.fullmatch(rhs_raw)
@@ -142,6 +144,11 @@ class Compiler:
         self.fmt_i32 = self.cstring("%d\n")
         self.fmt_i64 = self.cstring("%lld\n")
 
+
+    
+    def _shell_single_quote(self, s: str) -> str:
+        # Safely single-quote for POSIX shell: ' -> '"'"'
+        return s.replace("'", "'\"'\"'")
 
     def unique(self, base):
         self.uniq += 1
@@ -260,6 +267,27 @@ class Compiler:
         self._emit_mov_imm(tmp2, 32 if ty==T_INT32 else 64, int(b_tok))
         self.out.emit(f"cmp {tmp}, {tmp2}")
 
+
+
+    def compile_gemini_call(self, line, ln):
+        m = GEMINI_CALL_RE.fullmatch(line)
+        if not m: 
+            return False
+
+        prompt = m.group(1)
+
+        # Build a safe shell command. We assume a CLI named `gemini` on PATH that
+        # accepts a single positional prompt and prints the answer.
+        # Use single quotes around the prompt and properly escape internal single quotes.
+        safe = self._shell_single_quote(prompt)
+        cmd  = f"./gemini '{safe}'"
+
+        # Put command in a C string and call system(3)
+        lbl = self.cstring(cmd)
+        self.out.emit(f"adrp x0, {lbl}@PAGE")
+        self.out.emit(f"add  x0, x0, {lbl}@PAGEOFF")
+        self.out.emit("bl _system")
+        return True
     # ---- builtin calls: print ----
     def compile_print_string(self, line, ln):
         m = STR_CALL_RE.fullmatch(line)
@@ -665,6 +693,9 @@ class Compiler:
     def compile_statement(self, raw, ln):
         line = strip_comment(raw)
         if not line: return
+        if self.compile_gemini_call(line, ln): return
+        if self.compile_print_string(line, ln): return
+        if self.compile_print_value(line, ln): return
         if self.compile_print_string(line, ln): return
         if self.compile_print_value(line, ln): return
         if self.compile_label(line, ln): return
