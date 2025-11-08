@@ -29,7 +29,7 @@ stack_list = []
 
 def process(line: str):
     x=0
-    with open("beta", "w") as f:
+    with open("beta.asm", "w") as f:
         f.write("")
     
 
