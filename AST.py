@@ -6,6 +6,7 @@ grammar = r"""
 ?stmt: init
      | expr
      | decl
+     
 
 // type name = expr
 init: type factor "=" expr -> init | factor "=" expr -> initpd
@@ -15,6 +16,7 @@ decl: type factor
      | "int32"    -> t_int32
      | "float64"  -> t_float64
      | "float32"  -> t_float32
+     | "bool" -> t_bool
 
 // expressions with precedence:
 // sum: + -
@@ -65,6 +67,9 @@ class AST(Transformer):
 
     def t_int32(self, items):
         return "int32"
+
+    def t_bool(self, items):
+        return "bool"
 
     def t_int64(self, items):
         return "int64"
