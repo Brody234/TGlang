@@ -3,6 +3,11 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+.bin
+
+.asm
+.toml
+
 # C extensions
 *.so
 

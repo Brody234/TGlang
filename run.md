@@ -1,0 +1,1 @@
+gcc -o asmrunner asmrunner.c output.asm
