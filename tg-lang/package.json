@@ -1,0 +1,29 @@
+{
+    "name": "tg-lang",
+    "displayName": "TG Language",
+    "description": "Syntax highlighting for the TG language",
+    "version": "0.0.1",
+    "publisher": "you", 
+    "engines": {
+      "vscode": "^1.80.0"
+    },
+    "categories": ["Programming Languages"],
+    "contributes": {
+      "languages": [
+        {
+          "id": "tg",
+          "aliases": ["TG", "tg"],
+          "extensions": [".tg"],
+          "configuration": "./language-configuration.json"
+        }
+      ],
+      "grammars": [
+        {
+          "language": "tg",
+          "scopeName": "source.tg",
+          "path": "./syntaxes/tg.tmLanguage.json"
+        }
+      ]
+    }
+  }
+  
